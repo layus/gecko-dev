@@ -5,7 +5,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 if CONFIG['JS_SHELL_NAME']:
-    GeckoProgram(CONFIG['JS_SHELL_NAME'], linkage=None)
+    GeckoProgram(CONFIG['JS_SHELL_NAME']+"shell", linkage=None)
     if CONFIG['JS_BUNDLED_EDITLINE']:
         USE_LIBS += ['editline']
     USE_LIBS += ['static:js']
@@ -64,4 +64,4 @@ FINAL_TARGET_PP_FILES += ['js-gdb.py.in']
 OBJDIR_FILES.js.src.shell += ['!/dist/bin/js-gdb.py']
 
 # People expect the js shell to wind up in the top-level JS dir.
-OBJDIR_FILES.js.src += ['!js%s' % CONFIG['BIN_SUFFIX']]
+OBJDIR_FILES.js.src += ['!jsshell%s' % CONFIG['BIN_SUFFIX']]

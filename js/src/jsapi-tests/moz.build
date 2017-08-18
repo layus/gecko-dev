@@ -4,7 +4,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-GeckoProgram('jsapi-tests', linkage=None)
+GeckoProgram('_jsapi-tests', linkage=None)
 
 UNIFIED_SOURCES += [
     'selfTest.cpp',
@@ -156,4 +156,4 @@ if CONFIG['_MSC_VER']:
     CXXFLAGS += ['-wd4312']
 
 DEFINES['topsrcdir'] = '%s/js/src' % TOPSRCDIR
-OBJDIR_PP_FILES.js.src['jsapi-tests'] += ['jsapi-tests-gdb.py.in']
+OBJDIR_PP_FILES.js.src['_jsapi-tests'] += ['jsapi-tests-gdb.py.in']
