@@ -155,9 +155,15 @@ ifdef MOZ_ARTIFACT_BUILDS
 endif
 	$(call BUILDSTATUS,TIER_START make)
 	$(MAKE) buildid.h source-repo.h
+	(cd ipc/ipdl && eval $$(< $(topsrcdir)/ipdl.run))
+	# ensure all the .pyc are up-to-date
+	# Too hash ?
+	#find -type f -name "*.pyc" -delete
+	# Does not work due to permissions issues
+	#$(PYTHON) -m compileall _virtualenv
 	$(call BUILDSTATUS,TIER_FINISH make)
 	$(call BUILDSTATUS,TIER_START tup)
-	@$(TUP) $(if $(findstring s,$(filter-out --%,$(MAKEFLAGS))),,--verbose)
+	@$(tup) $(if $(findstring s,$(filter-out --%,$(MAKEFLAGS))),,--verbose)
 	$(call BUILDSTATUS,TIER_FINISH tup)
 
 # process_install_manifest needs to be invoked with --no-remove when building

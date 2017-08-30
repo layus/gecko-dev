@@ -116,7 +116,8 @@ def config_status(config):
 
         # A lot of the build backend code is currently expecting byte strings
         # and breaks in subtle ways with unicode strings.
-        return config_status(args=[], **encode(sanitized_config, encoding))
+        # NO, DONT! (@layus)
+        #return config_status(args=[], **encode(sanitized_config, encoding))
     return 0
 
 

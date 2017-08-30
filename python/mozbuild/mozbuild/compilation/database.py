@@ -15,10 +15,12 @@ from mozbuild.frontend.data import (
     DirectoryTraversal,
     Defines,
     Linkable,
+    SharedLibrary,
     LocalInclude,
     PerSourceFlag,
     VariablePassthru,
     SimpleProgram,
+    Program
 )
 from mozbuild.shellutil import (
     quote as shell_quote,
@@ -76,10 +78,20 @@ class CompileDBBackend(CommonBackend):
                     self._local_flags[obj.objdir][var] = value
 
         elif isinstance(obj, (Sources, GeneratedSources)):
+            if isinstance(obj.defines, Defines): # As opposed to HostDefines
+                for d in obj.defines.get_defines():
+                    if d not in self._defines[obj.objdir]:
+                        self._defines[obj.objdir].append(d)
             # For other sources, include each source file.
             for f in obj.files:
-                self._build_db_line(obj.objdir, obj.relativedir, obj.config, f,
+                self._compiler_db_entry(obj.objdir, obj.relativedir, obj.config, f,
                                     obj.canonical_suffix)
+
+        elif isinstance(obj, Program):
+            self._linker_db_entry(obj, obj.objdir, obj.relativedir, obj.config, obj.program)
+
+        elif isinstance(obj, SharedLibrary):
+            self._linker_db_entry(obj, obj.objdir, obj.relativedir, obj.config, obj.lib_name)
 
         elif isinstance(obj, LocalInclude):
             self._includes[obj.objdir].append('-I%s' % mozpath.normpath(
@@ -102,6 +114,8 @@ class CompileDBBackend(CommonBackend):
                 self._gyp_dirs.add(obj.objdir)
             for var in ('MOZBUILD_CFLAGS', 'MOZBUILD_CXXFLAGS',
                         'MOZBUILD_CMFLAGS', 'MOZBUILD_CMMFLAGS',
+                        'MOZBUILD_ASFLAGS', 'ASFLAGS',
+                        'AS', 'AS_DASH_C_FLAG',
                         'RTL_FLAGS', 'VISIBILITY_FLAGS'):
                 if var in obj.variables:
                     self._local_flags[obj.objdir][var] = obj.variables[var]
@@ -142,7 +156,8 @@ class CompileDBBackend(CommonBackend):
                     f = env.substs.get(var)
                     if f:
                         local_extra.extend(f)
-            variables = {
+            variables = dict(env.substs)
+            variables.update({
                 'LOCAL_INCLUDES': self._includes[directory],
                 'DEFINES': self._defines[directory],
                 'EXTRA_INCLUDES': local_extra,
@@ -151,17 +166,22 @@ class CompileDBBackend(CommonBackend):
                 'MOZILLA_DIR': env.topsrcdir,
                 'topsrcdir': env.topsrcdir,
                 'topobjdir': env.topobjdir,
-            }
+                })
             variables.update(self._local_flags[directory])
-            c = []
-            for a in cmd:
-                a = expand_variables(a, variables).split()
-                if not a:
-                    continue
-                if isinstance(a, types.StringTypes):
-                    c.append(a)
-                else:
-                    c.extend(a)
+            while True:
+                c = []
+                for a in cmd:
+                    a = expand_variables(a, variables).split()
+                    if not a:
+                        continue
+                    if isinstance(a, types.StringTypes):
+                        c.append(a)
+                    else:
+                        c.extend(a)
+                #print (cmd, c)
+                if c == cmd:
+                    break
+                cmd = c
             per_source_flags = self._per_source_flags.get(filename)
             if per_source_flags is not None:
                 c.extend(per_source_flags)
@@ -181,10 +201,10 @@ class CompileDBBackend(CommonBackend):
         # For unified sources, only include the unified source file.
         # Note that unified sources are never used for host sources.
         for f in obj.unified_source_mapping:
-            self._build_db_line(obj.objdir, obj.relativedir, obj.config, f[0],
+            self._compiler_db_entry(obj.objdir, obj.relativedir, obj.config, f[0],
                                 obj.canonical_suffix)
             for entry in f[1]:
-                self._build_db_line(obj.objdir, obj.relativedir, obj.config,
+                self._compiler_db_entry(obj.objdir, obj.relativedir, obj.config,
                                     entry, obj.canonical_suffix, unified=f[0])
 
     def _handle_idl_manager(self, idl_manager):
@@ -193,14 +213,14 @@ class CompileDBBackend(CommonBackend):
     def _handle_ipdl_sources(self, ipdl_dir, sorted_ipdl_sources,
                              unified_ipdl_cppsrcs_mapping):
         for f in unified_ipdl_cppsrcs_mapping:
-            self._build_db_line(ipdl_dir, None, self.environment, f[0],
+            self._compiler_db_entry(ipdl_dir, None, self.environment, f[0],
                                 '.cpp')
 
     def _handle_webidl_build(self, bindings_dir, unified_source_mapping,
                              webidls, expected_build_output_files,
                              global_define_files):
         for f in unified_source_mapping:
-            self._build_db_line(bindings_dir, None, self.environment, f[0],
+            self._compiler_db_entry(bindings_dir, None, self.environment, f[0],
                                 '.cpp')
 
     COMPILERS = {
@@ -208,6 +228,9 @@ class CompileDBBackend(CommonBackend):
         '.cpp': 'CXX',
         '.m': 'CC',
         '.mm': 'CXX',
+        # Should be AS, but AS is $(CC)...
+        '.S': 'AS',
+        '.s': 'AS',
     }
 
     CFLAGS = {
@@ -215,16 +238,28 @@ class CompileDBBackend(CommonBackend):
         '.cpp': 'CXXFLAGS',
         '.m': 'CFLAGS',
         '.mm': 'CXXFLAGS',
+        '.S': 'ASFLAGS',
+        '.s': 'ASFLAGS',
     }
 
-    def _build_db_line(self, objdir, reldir, cenv, filename,
+    def _compiler_db_entry(self, objdir, reldir, cenv, filename,
                        canonical_suffix, unified=None):
         if canonical_suffix not in self.COMPILERS:
             return
         db = self._db.setdefault((objdir, filename, unified),
-            cenv.substs[self.COMPILERS[canonical_suffix]].split() +
-            ['-o', '/dev/null', '-c'])
+            ['$(%s)' % self.COMPILERS[canonical_suffix], '-o', '/dev/null', '-c'])
         reldir = reldir or mozpath.relpath(objdir, cenv.topobjdir)
+
+        if canonical_suffix == '.s':
+            db[:] = "$(AS) -o /dev/null $(ASFLAGS) $(MOZBUILD_ASFLAGS) $(AS_DASH_C_FLAG)".split()
+
+
+            return
+        elif canonical_suffix == '.S':
+            db[:] = "$(AS) -o /dev/null $(DEFINES) $(ASFLAGS) $(MOZBUILD_ASFLAGS) $(LOCAL_INCLUDES) -c".split()
+            return
+
+
 
         def append_var(name):
             value = cenv.substs.get(name)
@@ -238,7 +273,7 @@ class CompileDBBackend(CommonBackend):
             db.append('$(STL_FLAGS)')
 
         db.extend((
-            '$(VISIBILITY_FLAGS)',
+            #'$(VISIBILITY_FLAGS)',
             '$(DEFINES)',
             '-I%s' % mozpath.join(cenv.topsrcdir, reldir),
             '-I%s' % objdir,
@@ -264,3 +299,68 @@ class CompileDBBackend(CommonBackend):
         elif canonical_suffix == '.mm':
             append_var('OS_COMPILE_CMMFLAGS')
             db.append('$(MOZBUILD_CMMFLAGS)')
+        elif canonical_suffix == '.s':
+            db.append('$(ASFLAGS)')
+
+
+    def _linker_db_entry(self, obj, objdir, reldir, cenv, filename):
+        reldir = reldir or mozpath.relpath(objdir, cenv.topobjdir)
+
+        db = self._db.setdefault((objdir, filename, None), [])
+        def append_var(name):
+            value = cenv.substs.get(name)
+            if not value:
+                return
+            if isinstance(value, types.StringTypes):
+                value = value.split()
+            db.extend(value)
+
+        if isinstance(obj, Program):
+            command = "SHELL=$(SHELL) $(PYTHON) -B $(MOZILLA_DIR)/config/expandlibs_exec.py --uselist -- $(CXX)"
+        elif isinstance(obj, SharedLibrary):
+            command = "SHELL=$(SHELL) $(PYTHON) -B $(MOZILLA_DIR)/config/expandlibs_exec.py --uselist -- $(CC)"
+        elif isinstance(obj, StaticLibrary):
+            command = "SHELL=$(SHELL) $(PYTHON) $(MOZILLA_DIR)/config/expandlibs_gen.py -o /dev/null"
+            db[:] = command
+            return
+
+        db.append(command)
+        db.extend(('-o', '/dev/null'))
+        db.append('$(DSO_PIC_CFLAGS)')
+        db.append('$(DSO_LDOPTS)')
+        #'$(CXXFLAGS)',
+        append_var('MOZ_DEBUG_FLAGS')
+        append_var('MOZ_OPTIMIZE_FLAGS')
+        append_var('MOZ_FRAMEPTR_FLAGS')
+        db.append('$(WARNINGS_AS_ERRORS)')
+
+        #'$(PROGOBJS)',
+        db.append('<OBJS>') # A placeholder for later...
+
+        #'$(RESFILE)' ignored, for now
+        #'$(WIN32_EXE_LDFLAGS)' ignored, for now
+
+        # $(LDFLAGS)
+        # LDFLAGS = $(OS_LDFLAGS) $(MOZBUILD_LDFLAGS) $(MOZ_FIX_LINK_PATHS)
+        #   $(OS_LDFLAGS)
+        db.append('$(LDFLAGS)')
+        db.append('$(MOZBUILD_LDFLAGS)')
+        db.append('$(MOZ_FIX_LINK_PATHS)')
+        db.append('$(OS_LDFLAGS)')
+        append_var('LINKER_LDFLAGS')
+
+        # $(WRAP_LDFLAGS) seems unused
+        # $(STATIC_LIBS)
+        db.append('$(STATIC_LIBS)')
+
+        # $(MOZ_PROGRAM_LDFLAGS) used for arm-Darwin
+        # $(SHARED_LIBS)
+        db.append('$(SHARED_LIBS)')
+        # $(EXTRA_LIBS)' ignore, mainly used in recursive .mk files
+
+        db.append('$(OS_LIBS)')
+        # $(BIN_FLAGS)
+        # $(EXE_DEF_FILE) windows, skipped for now.
+
+
+

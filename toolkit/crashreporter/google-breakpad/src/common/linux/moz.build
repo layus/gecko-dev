@@ -27,7 +27,7 @@ HOST_SOURCES += [
     'dump_symbols.cc',
     'elf_symbols_to_module.cc',
     'elfutils.cc',
-    'file_id.cc',
+    #'file_id.cc',
     'linux_libc_support.cc',
     'memory_mapped_file.cc',
 ]
