@@ -246,6 +246,7 @@ class TupBackend(CommonBackend):
         # will be built before any rules that list this as an input.
         self._installed_idls = '$(MOZ_OBJ_ROOT)/<installed-idls>'
         self._installed_files = '$(MOZ_OBJ_ROOT)/<installed-files>'
+        self._installed_libs = '$(MOZ_OBJ_ROOT)/<installed-libs>'
         # The preprocessor including source-repo.h and buildid.h creates
         # dependencies that aren't specified by moz.build and cause errors
         # in Tup. Express these as a group dependency.
@@ -361,13 +362,15 @@ class TupBackend(CommonBackend):
             cmd=cmd,
             inputs=inputs,
             outputs=[shlib.lib_name],
-            display='LINK %o'
+            display='LINK %o',
+            extra_outputs=[self._installed_libs]
         )
         backend_file.symlink_rule(mozpath.join(backend_file.objdir,
                                                shlib.lib_name),
                                   output=mozpath.join(self.environment.topobjdir,
                                                       shlib.install_target,
-                                                      shlib.lib_name))
+                                                      shlib.lib_name),
+                                  output_group=self._installed_libs)
 
     def _gen_programs(self, backend_file):
         for p in backend_file.programs:
@@ -379,7 +382,9 @@ class TupBackend(CommonBackend):
         static_libs = self._lib_paths(backend_file.objdir, static_libs)
         shared_libs = self._lib_paths(backend_file.objdir, shared_libs)
 
-        inputs = objs + static_libs + shared_libs
+        inputs = objs + static_libs + shared_libs #self._shared_lib_groups(shared_libs)
+        if any('libxul.so' in l for l in shared_libs):
+            inputs.append(self._installed_libs)
 
         list_file_name = '%s.list' % prog.name.replace('.', '_')
         list_file = self._make_list_file(backend_file.objdir, objs, list_file_name)
@@ -870,6 +875,9 @@ class TupBackend(CommonBackend):
             if any(f.endswith(('automation.py', 'source-repo.h', 'buildid.h'))
                    for f in obj.outputs):
                 extra_outputs = [self._early_generated_files]
+            elif any(f.startswith('dependentlibs') for f in obj.outputs):
+                full_inputs += [self._installed_libs]
+                extra_outputs = None
             else:
                 extra_outputs = [self._installed_files] if obj.required_for_compile else []
                 full_inputs += [self._early_generated_files]
