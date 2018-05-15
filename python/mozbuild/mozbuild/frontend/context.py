@@ -446,7 +446,7 @@ class CompileFlags(BaseCompileFlags):
              ('CXXFLAGS', 'CFLAGS')),
             ('OS_INCLUDES', list(itertools.chain(*(context.config.substs.get(v, []) for v in (
                 'NSPR_CFLAGS', 'NSS_CFLAGS', 'MOZ_JPEG_CFLAGS', 'MOZ_PNG_CFLAGS',
-                'MOZ_ZLIB_CFLAGS', 'MOZ_PIXMAN_CFLAGS')))),
+                'MOZ_ZLIB_CFLAGS', 'MOZ_PIXMAN_CFLAGS', 'XCFLAGS')))),
              ('CXXFLAGS', 'CFLAGS')),
             ('DSO', context.config.substs.get('DSO_CFLAGS'),
              ('CXXFLAGS', 'CFLAGS')),
