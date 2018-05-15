@@ -311,6 +311,9 @@ class TupBackend(CommonBackend):
     def _gen_shared_library(self, backend_file):
         shlib = backend_file.shared_lib
 
+        if 'gtest' in backend_file.objdir:
+            return
+
         if shlib.cxx_link:
             mkshlib = (
                 [backend_file.environment.substs['CXX']] +
