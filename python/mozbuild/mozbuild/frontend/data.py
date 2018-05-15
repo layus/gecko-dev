@@ -691,7 +691,7 @@ class RustLibrary(StaticLibrary):
             return
         build_dir = mozpath.join(target_dir,
                                  cargo_output_directory(context, self.TARGET_SUBST_VAR))
-        self.import_name = mozpath.join(build_dir, self.lib_name)
+        self.import_name = mozpath.join("rust", self.lib_name) #mozpath.join(build_dir, self.lib_name)
         self.deps_path = mozpath.join(build_dir, 'deps')
 
 

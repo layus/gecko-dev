@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -x
+
+MOZ_OBJ_ROOT=$1
+topsrcdir=$2
+
+here=${MOZ_OBJ_ROOT}/toolkit/library/rust
+
+cp $here/x86_64-unknown-linux-gnu/release/libgkrust.a ./libgkrust.a
+rm -rf $here/x86_64-unknown-linux-gnu \
+    $here/release \
+    ${MOZ_OBJ_ROOT}/dist/rust_bindings \
+    ${topsrcdir}/servo/components/style/properties/data.pyc \
+    ${topsrcdir}/servo/components/style/properties/build.pyc

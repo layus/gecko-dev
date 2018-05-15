@@ -44,6 +44,7 @@ from ..frontend.data import (
     HostLibrary,
     HostProgram,
     HostSimpleProgram,
+    RustLibrary,
     SharedLibrary,
     Sources,
     StaticLibrary,
@@ -83,6 +84,7 @@ class BackendTupfile(object):
         self.variables = {}
         self.static_lib = None
         self.shared_lib = None
+        self.rust_libs = []
         self.programs = []
         self.host_programs = []
         self.host_library = None
@@ -135,7 +137,7 @@ class BackendTupfile(object):
             'inputs': ' '.join(inputs),
             'extra_inputs': ' | ' + ' '.join(extra_inputs) if extra_inputs else '',
             'display': '^%s^ ' % caret_text if caret_text else '',
-            'cmd': ' '.join(cmd),
+            'cmd': ' '.join(p for p in cmd if p is not None),
             'outputs': ' '.join(outputs),
             'extra_outputs': ' | ' + ' '.join(extra_outputs) if extra_outputs else '',
         })
@@ -303,7 +305,7 @@ class TupBackend(CommonBackend):
         return cmd
 
     def _lib_paths(self, objdir, libs):
-        return [mozpath.relpath(mozpath.join(l.objdir, l.import_name), objdir)
+        return [mozpath.relpath(mozpath.join(l.objdir, getattr(l, "target_dir", ""), l.import_name), objdir)
                 for l in libs]
 
     def _gen_shared_library(self, backend_file):
@@ -481,6 +483,216 @@ class TupBackend(CommonBackend):
             display='AR %o'
         )
 
+    def _gen_rust_libraries(self, target_backend):
+        for l in target_backend.rust_libs:
+            self._gen_rust_library(l, self._get_backend_file_for(l), target_backend)
+                        
+    def _gen_rust_library(self, rust_lib, backend_file, target_backend):
+        #pprint.pprint(
+        #        {cls: 
+        #            {slot: getattr(rust_lib, slot) for slot in getattr(cls, '__slots__', tuple())}
+        #        for cls in RustLibrary.__mro__}
+        #    )
+
+        cargo_host_flag = [ "--target=" + backend_file.environment.substs['RUST_HOST_TARGET'] ]
+        cargo_target_flag = [ "--target=" + backend_file.environment.substs['RUST_TARGET'] ]
+
+        # Permit users to pass flags to cargo from their mozconfigs (e.g. --color=always).
+        cargo_build_flags = [ backend_file.environment.substs.get('CARGOFLAGS') ]
+        if "MOZ_DEBUG_RUST" not in backend_file.environment.substs:
+            cargo_build_flags.append("--release")
+        else:
+            cargo_build_flags.append("--frozen")
+
+        cargo_build_flags.extend(("--manifest-path", "%s/Cargo.toml" % mozpath.join(backend_file.topsrcdir, backend_file.relobjdir)))
+        if backend_file.environment.substs.get("BUILD_VERBOSE_LOG", False) or backend_file.environment.substs.get("MOZ_AUTOMATION"):
+            cargo_build_flags.append("--verbose")
+
+        # Enable color output if original stdout was a TTY and color settings
+        # aren't already present. This essentially restores the default behavior
+        # of cargo when running via `mach`.
+        #ifdef MACH_STDOUT_ISATTY
+        #ifeq (,$(findstring --color,$(cargo_build_flags)))
+        #cargo_build_flags += --color=always
+        #endif
+        #endif
+
+        # These flags are passed via `cargo rustc` and only apply to the final rustc
+        # invocation (i.e., only the top-level crate, not its dependencies).
+        cargo_rustc_flags = [ backend_file.environment.substs.get('CARGO_RUSTCFLAGS') ]
+        if backend_file.environment.substs.get("DEVELOPER_OPTIONS", False) and backend_file.environment.substs.get("MOZ_DEBUG_RUST", False):
+            # Enable link-time optimization for release builds.
+            cargo_rustc_flags += [ "-C", "lto" ]
+
+        # Cargo currently supports only two interesting profiles for building:
+        # development and release.  Those map (roughly) to --enable-debug and
+        # --disable-debug in Gecko, respectively, but there's another axis that we'd
+        # like to support: --{disable,enable}-optimize.  Since that would be four
+        # choices, and Cargo only supports two, we choose to enable various
+        # optimization levels in our Cargo.toml files all the time, and override the
+        # optimization level here, if necessary.  (The Cargo.toml files already
+        # specify debug-assertions appropriately for --{disable,enable}-debug.)
+        default_rustflags = []
+        if "MOZ_OPTIMIZE" not in backend_file.environment.substs:
+            default_rustflags = [ "-C", "opt-level=0" ]
+            # Unfortunately, -C opt-level=0 implies -C debug-assertions, so we need
+            # to explicitly disable them when MOZ_DEBUG_RUST is not set.
+            if "MOZ_DEBUG_RUST" not in backend_file.environment.substs:
+                default_rustflags += [ "-C", "debug-assertions=no" ]
+        rustflags_override = [ 'RUSTFLAGS=%s' % shell_quote(" ".join( default_rustflags )) ]
+
+        environment_cleaner = []
+        if "MOZ_MSVCBITS" in backend_file.environment.substs:
+            # If we are building a MozillaBuild shell, we want to clear out the
+            # vcvars.bat environment variables for cargo builds. This is because
+            # a 32-bit MozillaBuild shell on a 64-bit machine will try to use
+            # the 32-bit compiler/linker for everything, while cargo/rustc wants
+            # to use the 64-bit linker for build.rs scripts. This conflict results
+            # in a build failure (see bug 1350001). So we clear out the environment
+            # variables that are actually relevant to 32- vs 64-bit builds.
+            environment_cleaner += [ "-u", "VCINSTALLDIR", "PATH=''", "LIB=''", "LIBPATH=''" ]
+            # The servo build needs to know where python is, and we're removing the PATH
+            # so we tell it explicitly via the PYTHON env var.
+            environment_cleaner += [ "PYTHON='$(PYTHON)'" ]
+
+        rust_unlock_unstable = []
+        if "MOZ_RUST_SIMD" in backend_file.environment.substs:
+            rust_unlock_unstable += [ "RUSTC_BOOTSTRAP=1" ]
+
+        sccache_wrap = []
+        if "MOZ_USING_SCCACHE" in backend_file.environment.substs:
+            sccache_wrap = [ "RUSTC_WRAPPER='$(CCACHE)'" ]
+
+        # XXX hack to work around dsymutil failing on cross-OSX builds (bug 1380381)
+        #ifeq ($(HOST_OS_ARCH)-$(OS_ARCH),Linux-Darwin)
+        #default_rustflags += -C debuginfo=1
+        #else
+        #default_rustflags += -C debuginfo=2
+        #endif
+
+
+
+        cargo_linker_env_var = [ "CARGO_TARGET_$(RUST_TARGET_ENV_NAME)_LINKER" ]
+
+        # Don't define a custom linker on Windows, as it's difficult to have a
+        # non-binary file that will get executed correctly by Cargo.  We don't
+        # have to worry about a cross-compiling (besides x86-64 -> x86, which
+        # already works with the current setup) setup on Windows, and we don't
+        # have to pass in any special linker options on Windows.
+        if backend_file.environment.substs["OS_ARCH"] != "WINNT":
+
+            # Defining all of this for ASan/TSan builds results in crashes while running
+            # some crates's build scripts (!), so disable it for now.
+            if "MOZ_ASAN" not in backend_file.environment.substs and "MOZ_TSAN" not in backend_file.environment.substs:
+                # Cargo needs the same linker flags as the C/C++ compiler,
+                # but not the final libraries. Filter those out because they
+                # cause problems on macOS 10.7; see bug 1365993 for details.
+                #target_cargo_env_vars := \
+                #    MOZ_CARGO_WRAP_LDFLAGS="$(filter-out -framework Cocoa -lobjc AudioToolbox ExceptionHandling,$(LDFLAGS))" \
+                #    MOZ_CARGO_WRAP_LD="$(CC)" \
+                # XXX too make-specific...
+                cargo_linker = [ "$(topsrcdir)/build/cargo-linker" ]
+                #$(cargo_linker_env_var)=$(topsrcdir)/build/cargo-linker
+
+
+        # We use the + prefix to pass down the jobserver fds to cargo, but we
+        # don't use the prefix when make -n is used, so that cargo doesn't run
+        # in that case)
+        #XXX huh ?
+        #$(if $(findstring n,$(filter-out --%, $(MAKEFLAGS))),,+)
+        cmd = [ "env" ] + environment_cleaner
+        cmd += rust_unlock_unstable
+        cmd += rustflags_override
+        cmd += sccache_wrap
+        cmd += [
+                "CARGO_TARGET_DIR=$(CARGO_TARGET_DIR)",
+                "RUSTC=" + backend_file.environment.substs["RUSTC"],
+                "MOZ_SRC=%s" % self.environment.topsrcdir,
+                "MOZ_DIST=" + mozpath.join(self.environment.topobjdir, "dist"),
+                'LIBCLANG_PATH="%s"' % backend_file.environment.substs['MOZ_LIBCLANG_PATH'],
+                'CLANG_PATH="%s"' % backend_file.environment.substs['MOZ_CLANG_PATH'],
+                "PKG_CONFIG_ALLOW_CROSS=1",
+                "RUST_BACKTRACE=full",
+                "MOZ_TOPOBJDIR=%s" % self.environment.topobjdir,
+               ]
+        #cmd += target_cargo_env_vars
+        cmd += [ backend_file.environment.substs["CARGO"], "rustc" ] + cargo_build_flags
+
+        #ifdef HOST_RUST_LIBRARY_FEATURES
+        #host_rust_features_flag := --features "$(HOST_RUST_LIBRARY_FEATURES)"
+        #endif
+        rust_features_flag = []
+        if rust_lib.features:
+            rust_features_flag = [ "--features", shell_quote(' '.join(rust_lib.features)) ]
+
+        # Assume any system libraries rustc links against are already in the target's LIBS.
+        #
+        # We need to run cargo unconditionally, because cargo is the only thing that
+        # has full visibility into how changes in Rust sources might affect the final
+        # build.
+        cargo = ( 
+                cmd +
+                [ "--lib" ] +
+                cargo_target_flag +
+                rust_features_flag +
+                [ '--' ] +
+                cargo_rustc_flags
+            )
+
+        # Check is a little different
+        # $(call CARGO_CHECK,$(target_cargo_env_vars)) --lib $(cargo_target_flag) $(rust_features_flag)
+
+        """
+        force-cargo-host-library-build:
+            $(REPORT_BUILD)
+                $(call CARGO_BUILD) --lib $(cargo_host_flag) $(host_rust_features_flag)
+
+        $(HOST_RUST_LIBRARY_FILE): force-cargo-host-library-build
+
+        force-cargo-host-library-check:
+            $(call CARGO_CHECK) --lib $(cargo_host_flag) $(host_rust_features_flag)
+        else
+        force-cargo-host-library-check:
+            @true
+        endif # HOST_RUST_LIBRARY_FILE
+
+        ifdef RUST_PROGRAMS
+        force-cargo-program-build:
+            $(REPORT_BUILD)
+                $(call CARGO_BUILD,$(target_cargo_env_vars)) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag)
+
+        $(RUST_PROGRAMS): force-cargo-program-build
+
+        force-cargo-program-check:
+            $(call CARGO_CHECK,$(target_cargo_env_vars)) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag)
+        else
+        force-cargo-program-check:
+            @true
+        endif # RUST_PROGRAMS
+        ifdef HOST_RUST_PROGRAMS
+        force-cargo-host-program-build:
+            $(REPORT_BUILD)
+                $(call CARGO_BUILD) $(addprefix --bin ,$(HOST_RUST_CARGO_PROGRAMS)) $(cargo_host_flag)
+
+        $(HOST_RUST_PROGRAMS): force-cargo-host-program-build
+
+        force-cargo-host-program-check:
+            $(REPORT_BUILD)
+                $(call CARGO_CHECK) $(addprefix --bin ,$(HOST_RUST_CARGO_PROGRAMS)) $(cargo_host_flag)
+        else
+        force-cargo-host-program-check:
+            @true
+        endif # HOST_RUST_PROGRAMS
+        """
+
+	#print('Shared library:', obj.lib_name)
+        backend_file.rule(
+                display="RUSTC %o",
+                inputs=[self._installed_files],
+                outputs=[rust_lib.lib_name],
+                #output_group="%s/<%s>" % (rust_lib.target_dir, rust_lib.lib_name),
+                cmd=cargo + [ '&&', "$(topsrcdir)/cleanup", '$(MOZ_OBJ_ROOT)', '$(topsrcdir)' ],
+	    )
 
     def consume_object(self, obj):
         """Write out build files necessary to build with tup."""
@@ -536,6 +748,9 @@ class TupBackend(CommonBackend):
             backend_file.host_sources[obj.canonical_suffix].extend(obj.files)
         elif isinstance(obj, VariablePassthru):
             backend_file.variables = obj.variables
+        elif isinstance(obj, RustLibrary):
+            target_backend = self._get_backend_file(mozpath.join(obj.relobjdir, obj.target_dir))
+            target_backend.rust_libs.append(obj)
         elif isinstance(obj, StaticLibrary):
             backend_file.static_lib = obj
         elif isinstance(obj, SharedLibrary):
@@ -571,6 +786,7 @@ class TupBackend(CommonBackend):
             for var, gen_method in ((backend_file.shared_lib, self._gen_shared_library),
                                     (backend_file.static_lib and backend_file.static_lib.no_expand_lib,
                                      self._gen_static_library),
+                                    (backend_file.rust_libs, self._gen_rust_libraries),
                                     (backend_file.programs, self._gen_programs),
                                     (backend_file.host_programs, self._gen_host_programs),
                                     (backend_file.host_library, self._gen_host_library)):
