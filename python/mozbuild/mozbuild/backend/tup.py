@@ -851,7 +851,7 @@ class TupBackend(CommonBackend):
                 obj.outputs[0],
                 '%s.pp' % obj.outputs[0], # deps file required
             ])
-            full_inputs = [f.full_path for f in obj.inputs]
+            full_inputs = [mozpath.relpath(f.full_path, backend_file.objdir) if f.full_path.startswith(backend_file.objdir) else f.full_path for f in obj.inputs]
             cmd.extend(full_inputs)
             cmd.extend(shell_quote(f) for f in obj.flags)
 
