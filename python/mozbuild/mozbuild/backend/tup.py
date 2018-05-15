@@ -94,7 +94,7 @@ class BackendTupfile(object):
         # depends on them.
         self._skip_files = [
             'signmar',
-            'libxul.so',
+        #    'libxul.so',
             'libtestcrasher.so',
         ]
 
@@ -835,7 +835,7 @@ class TupBackend(CommonBackend):
         # TODO: These are directories that don't work in the tup backend
         # yet, because things they depend on aren't built yet.
         skip_directories = (
-            'toolkit/library', # libxul.so
+            #'toolkit/library', # libxul.so
         )
         if obj.script and obj.method and obj.relobjdir not in skip_directories:
             backend_file.export_shell()
@@ -963,8 +963,8 @@ class TupBackend(CommonBackend):
 
                     # We're not generating files in these directories yet, so
                     # don't attempt to install files generated from them.
-                    if f.context.relobjdir not in ('toolkit/library',
-                                                   'js/src/shell'):
+                    if f.context.relobjdir not in (#'toolkit/library',
+                                                   'js/src/shell',):
                         output = mozpath.join('$(MOZ_OBJ_ROOT)', target, path,
                                               f.target_basename)
                         gen_backend_file = self._get_backend_file(f.context.relobjdir)
