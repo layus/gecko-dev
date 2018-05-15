@@ -63,7 +63,7 @@
 
 #ifdef MOZ_ENABLE_STARTUP_NOTIFICATION
 #define SN_API_NOT_YET_FROZEN
-#include <startup-notification-1.0/libsn/sn.h>
+#include <libsn/sn.h>
 #endif
 
 #include "mozilla/Assertions.h"
