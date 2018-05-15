@@ -197,6 +197,7 @@ class CommonBackend(BuildBackend):
         os_libs = []
         shared_libs = []
         static_libs = []
+        rust_libs = []
         objs = []
         no_pgo_objs = []
 
@@ -241,7 +242,9 @@ class CommonBackend(BuildBackend):
         system_libs = not isinstance(input_bin, StaticLibrary)
         for lib in input_bin.linked_libraries:
             if isinstance(lib, RustLibrary):
-                continue
+                # XXX: We assume that all the dependencies of the
+                # rust library are already included.
+                rust_libs.append(lib)
             elif isinstance(lib, StaticLibrary):
                 expand(lib, True, system_libs)
             elif isinstance(lib, SharedLibrary):
@@ -254,6 +257,7 @@ class CommonBackend(BuildBackend):
                 seen_libs.add(lib)
                 os_libs.append(lib)
 
+        static_libs.extend(rust_libs) # must be last
         return objs, no_pgo_objs, shared_libs, os_libs, static_libs
 
     def _make_list_file(self, objdir, objs, name):
