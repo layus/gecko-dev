@@ -422,8 +422,10 @@ class TupBackend(CommonBackend):
 
 
     def _gen_host_programs(self, backend_file):
+        skip_host_programs = [ "brotli" ]
         for p in backend_file.host_programs:
-            self._gen_host_program(backend_file, p)
+            if p.program not in skip_host_programs:
+                self._gen_host_program(backend_file, p)
 
 
     def _gen_host_program(self, backend_file, prog):
