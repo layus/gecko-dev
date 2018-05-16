@@ -406,6 +406,13 @@ class TupBackend(CommonBackend):
             [backend_file.environment.substs['OS_LIBS']] +
             os_libs
         )
+        # XXX Fix for modutil -lz
+        # In Nix, zlib requires special flags, but this goes unnoticed by the configure script.
+        if '-lz' in cmd:
+            from subprocess import check_output 
+            i = cmd.index('-lz')
+            cmd[i:i+1] = check_output(['pkg-config', 'zlib', '--libs']).splitlines()[0].split()
+
         backend_file.rule(
             cmd=cmd,
             inputs=inputs,
