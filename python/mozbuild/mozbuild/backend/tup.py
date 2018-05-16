@@ -613,7 +613,7 @@ class TupBackend(CommonBackend):
         cmd += rustflags_override
         cmd += sccache_wrap
         cmd += [
-                "CARGO_TARGET_DIR=$(CARGO_TARGET_DIR)",
+                "CARGO_TARGET_DIR=/tmp/cargo",
                 "RUSTC=" + backend_file.environment.substs["RUSTC"],
                 "MOZ_SRC=%s" % self.environment.topsrcdir,
                 "MOZ_DIST=" + mozpath.join(self.environment.topobjdir, "dist"),
@@ -695,12 +695,14 @@ class TupBackend(CommonBackend):
 
 	#print('Shared library:', obj.lib_name)
         backend_file.rule(
-                display="RUSTC %o",
-                inputs=[self._installed_files],
-                outputs=[rust_lib.lib_name],
-                #output_group="%s/<%s>" % (rust_lib.target_dir, rust_lib.lib_name),
-                cmd=cargo + [ '&&', "$(topsrcdir)/cleanup", '$(MOZ_OBJ_ROOT)', '$(topsrcdir)' ],
-	    )
+            display="RUSTC %o",
+            inputs=[self._installed_files],
+            outputs=[rust_lib.lib_name],
+            cmd=cargo + [ 
+                '&&', 'cp', '/tmp/cargo/x86_64-unknown-linux-gnu/release/%o', '%o',
+                '&&', "$(topsrcdir)/cleanup", '$(MOZ_OBJ_ROOT)', '$(topsrcdir)'
+            ],
+        )
 
     def consume_object(self, obj):
         """Write out build files necessary to build with tup."""
